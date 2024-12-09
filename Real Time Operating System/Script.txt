@@ -1,0 +1,532 @@
+#include "includes.h"
+
+//                                           CONSTANTS
+
+#define  TASK_STK_SIZE                 512       /* Size of each task's stacks (# of WORDs)            */
+#define WKE_TASKS 3
+#define  QMS_TASKS                    15 // Ilosc zadan obciazajacych
+
+//                                              VARIABLES
+
+OS_STK        TaskStartStk[TASK_STK_SIZE]; 			  //Tablica z 512 elementami - rozmiar stosu zadan (opcjonalnie 1024)
+INT8U         Task_QMS_DATA[QMS_TASKS];               //Numery zadan obciazajacych - do kazdego zadania zostanie przypisana odpowiednia ilosc danych
+OS_STK        Task_Stk_QMS[QMS_TASKS][TASK_STK_SIZE]; //Tablica dwuwymiarowa z rozmiarami poszczegolnych zadan (dla zadan obciazajcych)
+OS_STK        Task_Stk_WKE[WKE_TASKS][TASK_STK_SIZE]; //Tablica dwuwymiarowa z rozmiarami poszczegolnych zadan (dla zadan klawiatury, wyswietlania i przetwarzania)
+OS_EVENT     *Queue;  								  //Zadeklarowanie kolejki dla naszych zadan
+OS_EVENT     *Queue_ptr_CB[5];						  //Wskazniki na bloki kontroli zdarzen przypisane do kolejek
+void         *Queue_TAB[100]; 	  					  //Tablica wksaznikow rozmiar mowi nam o wielkosci naszej tablicy - liczbie wejsc do kolejki
+void         *Queue_TAB_2[5][20];					  //Tablica dwuwymiarowa wskaznikow dla 5 kolejek // 8 za szybko // 10 wolniej sie przepelnia // 12 jeszcze wolniej // 6 znacznie szybciej // dla 14 juz sie nie przepelni praktycznie
+OS_EVENT     *MessageBox; 							  //Zadeklarowanie skrzynki pocztowej dla naszych zadan
+OS_EVENT     *MessageBox_ptr_CB[5]; 				  //Wskazniki na bloki kontroli zdarzen przypisane do skrzynkek pocztowych
+OS_EVENT     *Semafor_Main; 						  //Zadeklarowanie semaforu dla naszych zadan
+OS_MEM       *Memory; 								  //Wskaznik na pamiec systemu operacyjnego
+INT32U obciazenieGlobalne; 							  //jest to zmienna globalna do zadan z semaforem
+typedef struct
+{
+	char Struct_Bufor[11]; 								// Tworzymy strukture,  czyli nasz STRUKTURA_GLOWNA gdzie bedziemy zapisywac dane do tablicy typu znakowego o rozmiarze 11 czyli tyle ile moze wejsc do obicazenia  32U plus jedno np na DELETE
+	INT8U Struct_Polecenie, Struct_Nr_Task, Struct_Err; //Zmienna wskazujaca, ktore polecenie nalezy wykonac (od 1 do 6) // Numer tasku // Blad do struktury
+	INT32U Struct_Obciazenie, Struct_Licznik; 			// Zmienna do obciazenia i zmienna licznik typu 32U zgodnie z instrukcja
+} STRUKTURA_GLOWNA; 									// Nazwa naszej struktury - nazwa zgodnie z sugestia prowadzacego z wielkiej litery
+INT8U Mem_TAB[100][sizeof(STRUKTURA_GLOWNA)]; 			//Dynamiczna alokacja pamieci - rezerwujemy 200 komorek o rozmiarze struktury
+
+//                                          FUNCTION PROTOTYPES
+
+		void  Wyswietlanie(void *pdata);           // Stworzenie zadania do wyswietlania o najwyzszym priorytecie
+		void  Klawiatura(void *pdata);             // Zadanie klawiatura o nizszym priorytecie
+		void  Edycja(void *pdata);                 // Zadanie edycja o jeszcze nizszym priorytecie
+		void  Q(void *data);                       // Zadanie Queue
+		void  M(void *data);                       // Zadanie MessageBox
+		void  S(void *data);                       // Zadanie Semafor
+        void  TaskStart(void *data);               // Zadanie TaskStart o najwyzszym mozliwym priorytecie
+static  void  TaskStartCreateTasks(void);          // Kreacja Taskow
+static  void  TaskStartDispInit(void);			   // Zainicjalizowanie ekranu
+static  void  TaskStartDisp(void);				   // Wystartowanie ekranu
+
+//                                              MAIN
+
+void  main (void)
+{
+    PC_DispClrScr(DISP_FGND_WHITE + DISP_BGND_BLACK);      /* Clear the screen                         */
+    OSInit();                                              /* Initialize uC/OS-II                      */
+    PC_DOSSaveReturn();                                    /* Save environment to return to DOS        */
+    PC_VectSet(uCOS, OSCtxSw);                             /* Install uC/OS-II's context switch vector */
+    Semafor_Main   = OSSemCreate(1);                          /* Random number semaphore                  */
+    OSTaskCreate(TaskStart, (void *)0, &TaskStartStk[TASK_STK_SIZE - 1], 0); // Rezerwacja niezbednej pamieci
+    OSStart();                                             /* Start multitasking                       */
+}
+
+//                                             STARTUP TASK
+
+void  TaskStart (void *pdata)
+{
+#if OS_CRITICAL_METHOD == 3                                /* Allocate storage for CPU status register */
+    OS_CPU_SR  cpu_sr;
+#endif
+    char  s[100]; 											// Deklaracja tablicy 100-elementowej
+	INT8U Licznik_do_while = 0, blad;   					// Deklaracja licznika Licznik_do_while bledu
+	STRUKTURA_GLOWNA flaga; 								// Deklaracja flagi o typie nowo stworzonej przez nas struktury
+    pdata = pdata;                                      	/* Prevent compiler warning                 */
+    TaskStartDispInit();  									/* Initialize the display                   */
+    OS_ENTER_CRITICAL();
+    PC_VectSet(0x08, OSTickISR);                           /* Install uC/OS-II's clock tick ISR        */
+    PC_SetTickRate(OS_TICKS_PER_SEC);                      /* Reprogram tick rate                      */
+    OS_EXIT_CRITICAL();
+    OSStatInit();                                          /* Initialize uC/OS-II's statistics         */
+	Queue=OSQCreate(&Queue_TAB[0], 100);      		                                     //Tworzymy kolejke
+	MessageBox=OSMboxCreate((void *)0);                                                  //Tworzymy skrzynke i nic nie przekazujemy
+    while(Licznik_do_while <= 4)                                                         //Stworzenie 5 zadan z kolejka i 5 zadan ze skrzynka
+	{
+		Queue_ptr_CB[Licznik_do_while]=OSQCreate(&Queue_TAB_2[Licznik_do_while][0], 4);  //Stworzenie 5 zadan do kolejki // wczesniej bylo 12 zamiast 14
+		MessageBox_ptr_CB[Licznik_do_while]=OSMboxCreate((void*)0);                      // Stworzenie 5 zadan do skrzynki
+		Licznik_do_while++;                                                              // Inkrementacja licznika
+	} 	
+	Memory=OSMemCreate(&Mem_TAB[0][0],100, sizeof(STRUKTURA_GLOWNA), &blad);             // Rezerwacja niezbednej pamieci
+	TaskStartCreateTasks();                                /* Create all the application tasks         */
+    for (;;) 
+	{
+        TaskStartDisp();                                  /* Update the display                       */
+        OSCtxSwCtr = 0;                                    /* Clear context switch counter             */
+		flaga.Struct_Polecenie=5;
+		OSQPost(Queue,&flaga); 															// Przeslanie flagi poprzez kolejke w celu obliczenia delty
+        OSTimeDlyHMSM(0, 0, 1, 0);                         /* Wait one second                          */
+    }
+}
+
+//                                      INITIALIZE THE DISPLAY
+
+static  void  TaskStartDispInit (void)
+{
+    PC_DispStr( 0,0,  "                           KLEPACZ SWOBODA SO RTOS                              ", DISP_FGND_YELLOW+ DISP_BGND_BLUE);
+    PC_DispStr( 0,1,  "                                                                                ", DISP_FGND_PURPLE + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,2,  "Nr  Typ     Obciazenie      Licznik         Delta        Bledy     Stan-Wyk./sec", DISP_FGND_YELLOW+ DISP_BGND_BLUE);
+    PC_DispStr( 0,3,  "1    Q                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,4,  "2    Q                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,5,  "3    Q                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,6,  "4    Q                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,7,  "5    Q                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,8,  "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,9,  "6    M                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,10, "7    M                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,11, "8    M                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,12, "9    M                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,13, "10   M                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,14, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,15, "11   S                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,16, "12   S                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,17, "13   S                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,18, "14   S                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,19, "15   S                                                                          ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+	PC_DispStr( 0,20, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+	PC_DispStr( 0,21, "                                                                                ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,22, "#Tasks          :        CPU Usage:     %                                       ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,23, "#Task switch/sec:                                                               ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    PC_DispStr( 0,24, "                            <-PRESS 'ESC' TO QUIT->                             ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY + DISP_BLINK);
+}
+
+//                                         UPDATE THE DISPLAY
+
+static  void  TaskStartDisp (void)
+{
+    char   s[80];
+    sprintf(s, "%5d", OSTaskCtr);                                  /* Display #tasks running               */
+    PC_DispStr(18, 22, s, DISP_FGND_YELLOW + DISP_BGND_BLUE);
+#if OS_TASK_STAT_EN > 0
+    sprintf(s, "%3d", OSCPUUsage);                                 /* Display CPU usage in %               */      // Moze przestac sie uaktualniac gdy damy za duze Struct_Obciazenie bo liczniki sie nie kreca
+    PC_DispStr(36, 22, s, DISP_FGND_YELLOW + DISP_BGND_BLUE);
+#endif
+    sprintf(s, "%5d", OSCtxSwCtr);                                 /* Display #context switches per second */
+    PC_DispStr(18, 23, s, DISP_FGND_YELLOW + DISP_BGND_BLUE);
+    sprintf(s, "V%1d.%02d", OSVersion() / 100, OSVersion() % 100); /* Display uC/OS-II's version number    */
+    PC_DispStr(75, 24, s, DISP_FGND_YELLOW + DISP_BGND_BLUE);
+	PC_DispStr( 25,23, "Frequency:                                     ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY); // Wyswietlanie czestotliwosci systemu rownej 700Hz
+	PC_DispStr( 36,23, "700", DISP_FGND_YELLOW + DISP_BGND_BLUE);
+	PC_DispStr( 40,23, "HZ                                      ", DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+    switch (_8087) 
+	{                                               /* Display whether FPU present          */
+        case 0:
+             PC_DispStr(71, 22, " NO  FPU ", DISP_FGND_YELLOW + DISP_BGND_BLUE);
+             break;
+        case 1:
+             PC_DispStr(71, 22, " 8087 FPU", DISP_FGND_YELLOW + DISP_BGND_BLUE);
+             break;
+        case 2:
+             PC_DispStr(71, 22, "80287 FPU", DISP_FGND_YELLOW + DISP_BGND_BLUE);
+             break;
+        case 3:
+             PC_DispStr(71, 22, "80387 FPU", DISP_FGND_YELLOW + DISP_BGND_BLUE);
+             break;
+    }
+}
+
+//                                           CREATE TASKS
+
+static  void  TaskStartCreateTasks (void)
+{
+     INT8U  i=0;
+	 OSTaskCreate(Wyswietlanie, 0, &Task_Stk_WKE[0][TASK_STK_SIZE - 1], 1); 				//Tworzymy zadanie ktore bedzie wyswietlac
+	 OSTaskCreate(Klawiatura, 0, &Task_Stk_WKE[1][TASK_STK_SIZE - 1], 2);   				//Tworzymy zadanie ktore bedzie sczytywac znaki
+	 OSTaskCreate(Edycja, 0, &Task_Stk_WKE[2][TASK_STK_SIZE - 1], 3);       				//Tworzymy zadanie ktore bedzie edytowac
+	 
+	while (i < 5) 
+	{ 
+	Task_QMS_DATA[i] = i; 																	// Kazde zadanie otrzyma swoj numer
+	Task_QMS_DATA[i+5]= i + 5 ;																// Kazde zadanie otrzyma swoj numer
+	Task_QMS_DATA[i+10]= i + 10;															// Kazde zadanie otrzyma swoj numer
+	OSTaskCreate(Q, &Task_QMS_DATA[i+5], &Task_Stk_QMS[i][TASK_STK_SIZE - 1], i+4 );        // Stworzenie zadan Q
+	OSTaskCreate(M, &Task_QMS_DATA[i], &Task_Stk_QMS[i+5][TASK_STK_SIZE - 1], i+9 );        // Stworzenie zadan M
+	OSTaskCreate(S, &Task_QMS_DATA[i+10], &Task_Stk_QMS[i+10][TASK_STK_SIZE - 1], i+14 );   // Stworzenie zadan S
+	i++;																					// Inkrementacja while'a
+	}
+
+}
+
+//                                                  TASKS
+
+ void Wyswietlanie(void *pdata)
+{
+	OS_Q_DATA qdata;
+	INT8U qdata_error;
+	STRUKTURA_GLOWNA *Wyswietlenie_VAR; 																	//Wskaznik na strukture potrzebny do odebrania wiadomosci z kolejki
+	char Obciazenie_wyswietlanie_TAB[32]; 																	//Tablica Struct_Obciazenie potrzebna do wyswietlania wyniku (rozmiar 32, poniewaz INT32U ma 32 bity)
+	char Licznik_char_TAB[32]; 																				//Tablica do licznika
+	int i=0;
+	INT8U blad, Miejsce_wyswietlenia_VAR = 0;                             									//Blad //wspolrzedna oznaczajaca aktualna kolumne
+	INT32U Aktualny_licznik_TAB[15],Poprzedni_Licznik_TAB[15], Delta_wyswietlanie_TAB[15];  				//Stworzenie tablicy do przechowywania aktualnej, poprzedniej i tej do wyswietlenia wartosci licznika
+	pdata=pdata; 																							//Aby kompilator sie nie czepial
+	while(i<=14)
+	{
+		Poprzedni_Licznik_TAB[i]=0; 																		// Czyscimy Poprzedni licznik przed wejsciem do nieskonczonego fora
+		i++; 																								// Inkrementacja while'a
+	}
+	for(;;)
+	{
+	  	Wyswietlenie_VAR = OSQPend(Queue, 0, &blad); 														//Odbieramy wiadomosc z kolejki
+		if((Wyswietlenie_VAR->Struct_Polecenie == 0) && (Miejsce_wyswietlenia_VAR <= 9)) 					//Jesli odebralismy sygnal ze nie ma znakow spejcalnych a ilosc kolumn jest dostepna 
+		{
+			PC_DispChar(Miejsce_wyswietlenia_VAR, 21, Wyswietlenie_VAR->Struct_Bufor[Miejsce_wyswietlenia_VAR], DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY); //Wyswietlamy pojedynczy odebrany znak
+			Miejsce_wyswietlenia_VAR++; 																	//Przesuwamy sie o jedno miejsce dalej 
+		}
+		if((Wyswietlenie_VAR->Struct_Polecenie == 1) && (Miejsce_wyswietlenia_VAR >= 1))					//Jesli wcisnelismy 1
+		{
+			Miejsce_wyswietlenia_VAR--; 																	//Przesuwamy sie o jedno miejsce wstecz
+			PC_DispChar(Miejsce_wyswietlenia_VAR, 21, Wyswietlenie_VAR->Struct_Bufor[Miejsce_wyswietlenia_VAR], DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY); //Wyswietlamy pusty znak
+		}
+		if(Wyswietlenie_VAR->Struct_Polecenie == 2 || Wyswietlenie_VAR->Struct_Polecenie == 3 )				//Jesli odebralismy sygnal ze zostal wcisniety klawisz delete
+		{ 
+			PC_DispClrRow(21,DISP_BGND_LIGHT_GRAY); 														//Czyscimy cala linie w ktorej wyswietlamy STRUKTURA_GLOWNA znak po znaku
+			Miejsce_wyswietlenia_VAR = 0; 																	//Zmieniamy indeks kolumny na 0	
+		}
+		if(Wyswietlenie_VAR->Struct_Polecenie == 4) 														// Odebralismy wartosc obciazenia dla zadan obciazajacych 
+		{ 
+			for(i=0; i<=9; i++)																				//Czyscimy tablice znakow przed wyswietleniem nowego obciazenia 
+			{
+				Obciazenie_wyswietlanie_TAB[i]=' ';															//Czyscimy obciazenie 
+				Licznik_char_TAB[i]=' ';																	//Czyscimy licznik 
+			}
+			ultoa(Wyswietlenie_VAR->Struct_Obciazenie, Obciazenie_wyswietlanie_TAB, 10); 					//W kolejce nie otrzymujemy stringow wiec konwersja unsigned inta na stringi
+			ultoa(Wyswietlenie_VAR->Struct_Licznik, Licznik_char_TAB, 10);
+			Aktualny_licznik_TAB[Wyswietlenie_VAR->Struct_Nr_Task]=Wyswietlenie_VAR->Struct_Licznik; 		//Przypisanie aktualnej wartosci licznika
+			if(Wyswietlenie_VAR->Struct_Nr_Task <= 4) 															
+			{
+				PC_DispStr(15,(Wyswietlenie_VAR->Struct_Nr_Task)+9, "          ",DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+				PC_DispStr(15,(Wyswietlenie_VAR->Struct_Nr_Task)+9, Obciazenie_wyswietlanie_TAB,DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);	//Wyswietlanie obciazenia,licznika praz braku bledu dla M
+				PC_DispStr(30,(Wyswietlenie_VAR->Struct_Nr_Task)+9, Licznik_char_TAB,DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+				PC_DispStr(58,(Wyswietlenie_VAR->Struct_Nr_Task)+9, "                    ",DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+				PC_DispStr(58,(Wyswietlenie_VAR->Struct_Nr_Task)+9,"Brak",DISP_FGND_GREEN + DISP_BGND_BROWN);
+			}
+			if((Wyswietlenie_VAR->Struct_Nr_Task >=5 ) && (Wyswietlenie_VAR->Struct_Nr_Task <= 9))
+			{
+				PC_DispStr(15,(Wyswietlenie_VAR->Struct_Nr_Task)-2, "          ",DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+				PC_DispStr(15,(Wyswietlenie_VAR->Struct_Nr_Task)-2, Obciazenie_wyswietlanie_TAB,DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);	//Wyswietlanie obciazenia,licznika praz braku bledu dla Q
+				PC_DispStr(30,(Wyswietlenie_VAR->Struct_Nr_Task)-2, Licznik_char_TAB,DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+				PC_DispStr(58,(Wyswietlenie_VAR->Struct_Nr_Task)-2, "                    ",DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+				PC_DispStr(58,(Wyswietlenie_VAR->Struct_Nr_Task)-2,"Brak",DISP_FGND_GREEN + DISP_BGND_BROWN);
+			}
+			if((Wyswietlenie_VAR->Struct_Nr_Task >=10) && (Wyswietlenie_VAR->Struct_Nr_Task <= 14))
+			{
+				PC_DispStr(15,(Wyswietlenie_VAR->Struct_Nr_Task)+5, "          ",DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+				PC_DispStr(15,(Wyswietlenie_VAR->Struct_Nr_Task)+5, Obciazenie_wyswietlanie_TAB,DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);	//Wyswietlanie obciazenia,licznika praz braku bledu dla S
+				PC_DispStr(30,(Wyswietlenie_VAR->Struct_Nr_Task)+5, Licznik_char_TAB,DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+				PC_DispStr(58,(Wyswietlenie_VAR->Struct_Nr_Task)+5, "                    ",DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+				PC_DispStr(58,(Wyswietlenie_VAR->Struct_Nr_Task)+5,"Brak",DISP_FGND_GREEN + DISP_BGND_BROWN);
+			}
+		}
+		qdata_error = OSQQuery(Queue, &qdata);
+		if ( qdata_error == OS_NO_ERR)
+		{
+			if(Wyswietlenie_VAR->Struct_Polecenie == 5) 														//Odebrana wiadomosc z TaskStart po jednej sekundzie - delta
+			{  
+				char t1[15][32]; 																				//Deklaracja dwu i jedno elementowej tablicy znakow
+				int j, k;
+				for(i=0; i<15; i++)																				//Petla for dla 15 zadan do delty
+				{
+					Delta_wyswietlanie_TAB[i]=Aktualny_licznik_TAB[i]-Poprzedni_Licznik_TAB[i];				    //Liczymy aktualna delte
+					Poprzedni_Licznik_TAB[i]=Aktualny_licznik_TAB[i]; 											//Przypisanie aktualnej delty do poprzedniej delty
+					ultoa(Delta_wyswietlanie_TAB[i], &t1[i][0], 10);											//Konwersja long inta na stringa
+					if (i <= 4)
+					{
+						PC_DispStr(45,i+9, "            ",DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);				//Wypisanie delty dla zadan M
+						PC_DispStr(45,i+9, &t1[i][0],DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+					}
+					if((i >=5 ) && (i <= 9))
+					{
+						PC_DispStr(45,i-2, "            ",DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);				//Wypisanie delty dla zadan Q
+						PC_DispStr(45,i-2, &t1[i][0],DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+					}
+					if((i >= 10) && (i <= 14))
+					{
+						PC_DispStr(45,i+5, "            ",DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);				//Wypisanie delty dla zadan S
+						PC_DispStr(45,i+5, &t1[i][0],DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+					}
+				}
+			} 
+			for(i=0; i<15; i++)																					//Wyswietlanie czy zostalo zadanie wykonano chociaz raz na sekunde - czy licznik nie rowna sie 0
+			{
+				if (i <= 4)																						//Dla zadan z MsgBox
+				{
+					if(Delta_wyswietlanie_TAB[i] == 0 )
+						PC_DispStr(75,i+9, "Nie",DISP_FGND_YELLOW + DISP_BGND_BLACK);							//Jesli delta == 0 to Nie wykonalo sie
+					else
+						PC_DispStr(75,i+9, "Tak",DISP_FGND_YELLOW + DISP_BGND_BLACK);							//Jesli delta >0 to wykonalo sie
+				}
+				if ((i >= 5 ) && ( i <=9 ))																		//Dla zadan z Queue
+				{
+					if(Delta_wyswietlanie_TAB[i] == 0 )
+						PC_DispStr(75,i-2, "Nie",DISP_FGND_YELLOW + DISP_BGND_BLACK);							//Jesli delta == 0 to Nie wykonalo sie
+					else
+						PC_DispStr(75,i-2, "Tak",DISP_FGND_YELLOW + DISP_BGND_BLACK);							//Jesli delta >0 to wykonalo sie
+				}
+				if ((i >= 10) && (i <=14 ))																		//Dla zadan z Semaforem
+				{
+					if(Delta_wyswietlanie_TAB[i] == 0 )
+						PC_DispStr(75,i+5, "Nie",DISP_FGND_YELLOW + DISP_BGND_BLACK);							//Jesli delta == 0 to Nie wykonalo sie
+					else
+						PC_DispStr(75,i+5, "Tak",DISP_FGND_YELLOW + DISP_BGND_BLACK);							//Jesli delta >0 to wykonalo sie
+				}
+			}
+		}
+		if(Wyswietlenie_VAR->Struct_Polecenie == 6)																							//Wyswietlamy informacje o potencjalnych bledach dla kazdego zadania
+		{
+			if(Wyswietlenie_VAR->Struct_Err == OS_Q_FULL)
+			{
+				PC_DispStr(58,(Wyswietlenie_VAR->Struct_Nr_Task)-2, "              ",DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY); 		//Wyswietlanie pelnej kolejki dla zadan Q
+				PC_DispStr(58,(Wyswietlenie_VAR->Struct_Nr_Task)-2,"Pelna kolejka",DISP_FGND_RED + DISP_BGND_BLACK);
+			}
+			if(Wyswietlenie_VAR->Struct_Err == OS_MBOX_FULL)
+			{
+				PC_DispStr(58,(Wyswietlenie_VAR->Struct_Nr_Task)+9, "              ",DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);			//Wyswietlanie pelnej skrzynki dla zadan M
+				PC_DispStr(58,(Wyswietlenie_VAR->Struct_Nr_Task)+9,"Pelna skrzynka",DISP_FGND_RED + DISP_BGND_BLACK);
+			}
+			if(Wyswietlenie_VAR->Struct_Err == 13)																							//Jesli przyjdzie blad dla semaforu
+			{
+				PC_DispStr(58,(Wyswietlenie_VAR->Struct_Nr_Task)+5, "              ",DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);			//Wyswietlanie bledu semafora dla zadan S
+				PC_DispStr(58,(Wyswietlenie_VAR->Struct_Nr_Task)+5,"Blad semafora",DISP_FGND_RED + DISP_BGND_BLACK);
+			} 
+			if(Wyswietlenie_VAR->Struct_Err == OS_MEM_NO_FREE_BLKS) 																		// Potrzebne gdy program ma wyciek pamieci. Gdy nie ma wolnych blokow pamieci to pojawia sie ten blad
+			{
+				PC_DispStr(17,20, "                    ",DISP_FGND_BLACK + DISP_BGND_LIGHT_GRAY);
+				PC_DispStr(17,20,"Wyciek pamieci",DISP_FGND_RED + DISP_BGND_BLACK);															//Informacja o wycieku pamieci ktora pojawia sie na ekranie
+			}
+		}
+	}
+} 
+
+void Klawiatura(void *pdata)
+{	
+	INT16S Przycisk; 								//Przycisk do szczytywania klawiatury
+	pdata=pdata; 									//aby kompilator sie nie czepial
+	
+	for(;;)
+	{
+		if (PC_GetKey(&Przycisk) == TRUE) 			//Ssprawdzenie czy Przycisk zostal wcisniety
+		{
+			if (Przycisk == 0x1B)   				// Jesli wcisnelismy ESC to wychodzimy z programu
+                PC_DOSReturn();                     /* Return to DOS                            */
+			OSMboxPost(MessageBox ,&Przycisk); 		// Wyslanie poprzez skrzynke pocztowa 
+		}
+		OSTimeDly(22); 								// Opoznienie o 22 cykl zegara bo klawiatura i tak nie dziala szybciej
+	}
+} 
+
+void Edycja(void *pdata)
+{
+	INT8U  blad;																						//Zmienna zawierajaca kod bledu
+	INT16S *pomoc, i = 0; 																				//Zmienna pomocnicza do przechowywania odbieranych wartosci ze skrzynki //i do fora
+	INT32U Obciazenie_Edycja_32U = 0; 																	//Obciazenie do semaforow po skonwertowaniu ze stringa na unsigned long
+	STRUKTURA_GLOWNA zapis, *Edycja_Wsk_na_strukture; 													//STRUKTURA_GLOWNA //Zmienna lokalna utworzona na strukturze STRUKTURA_GLOWNA 
+	zapis.Struct_Bufor[10]='\0'; 																		//Ostatni element tablicy ma wpisany symbol oznaczajacy koniec linii
+	pdata=pdata;
+	for(;;)
+	{
+		pomoc=OSMboxPend(MessageBox,0, &blad); 															//Odbieramy wskaznik na wiadomosc ze skrzynki
+		if((*pomoc == 13) && (i>=1)) 																	//Sprawdzamy czy zostal wcisniety klawisz enter
+		{
+			zapis.Struct_Polecenie = 3;																	//Wysylamy polecenie o wcisnietym klawiszu Enter
+			blad = OSQPost(Queue, &zapis); 																//Wysylamy enter zeby wyczyscic wpisywane na biezaca znaki
+			Obciazenie_Edycja_32U = strtoul(zapis.Struct_Bufor, 0, 10); 								//Odwrotnosc Ultola - Zamieniamy nasz string do ktorego zapisywalismy znaki na typ unsigned long
+			OSSemPend(Semafor_Main, 0, &blad); 															//Przechwycenie naszego semaforu dla zadan S
+			obciazenieGlobalne = Obciazenie_Edycja_32U; 												//Przypisujemy do naszej zmiennej globalnej Struct_Obciazenie z klawiatury
+			OSSemPost(Semafor_Main); 																	//Zwolnienie semaforu
+			for(i=0; i<=4; i++)
+			{																							//Dla zadan z MsgBox
+				Edycja_Wsk_na_strukture=OSMemGet(Memory, &blad); 										//Dynamiczna alokacja pamieci
+				if(blad == OS_MEM_NO_FREE_BLKS) 														//W przypadku braku wolnej pamieci blad
+				{ 
+					zapis.Struct_Err = OS_MEM_NO_FREE_BLKS; 											//Zapis do naszej struktury o braku wolnych blokow pamieci
+					zapis.Struct_Nr_Task=i;																//Wyslanie informacji o numerze zadania
+					zapis.Struct_Polecenie = 6;															//Wyslanie informacji o bledzie
+					OSQPost(Queue, &zapis); 															//Wysylmy blad w kolejce do wyswietlenia
+				}
+				if(blad == OS_NO_ERR)																	//Jesli nie zostal nam zwrocony blad o wycieku pamieci to postepujemy normalnie
+				{
+					Edycja_Wsk_na_strukture->Struct_Obciazenie = Obciazenie_Edycja_32U;					//Przypisanie obciazenia do naszego wskaznika na strukture
+					Edycja_Wsk_na_strukture->Struct_Nr_Task = i;										//Oraz przypisanie numeru dla zadan dla MsgBox
+					blad=OSMboxPost(MessageBox_ptr_CB[i], Edycja_Wsk_na_strukture);						//Wysylamy tu i zwalniamy pamiec dopiero w M
+					if(blad==OS_MBOX_FULL) 																//Jesli zapelnilismy wczesniej skrzynke to zwracamy blad 
+					{
+						zapis.Struct_Err=OS_MBOX_FULL;													//Blad ze skrzynka pelna
+						zapis.Struct_Nr_Task = i;														//Oraz przypisanie numeru dla zadan dla MsgBox
+						zapis.Struct_Polecenie = 6;														//Wyslanie polecenia o bledzie
+						OSQPost(Queue, &zapis); 														//Wysylamy blad poprzez kolejke do wyswietlania
+						OSMemPut(Memory, Edycja_Wsk_na_strukture);  									//Zwalniamy pamiec bo nie wyslalo sie w skrzynce i nie zwolni sie w tasku M
+					}
+				}
+			}
+			for(i=5; i<10; i++)																			//Dla zadan Queue
+			{
+				Edycja_Wsk_na_strukture = OSMemGet(Memory, &blad); 										//Dynamiczna alokacja pamieci
+				if(blad==OS_MEM_NO_FREE_BLKS) 															//Blad - Brak wolnej pamieci
+				{ 
+					zapis.Struct_Err=OS_MEM_NO_FREE_BLKS;												//Zapis do naszej struktury o braku wolnych blokow pamieci
+					zapis.Struct_Nr_Task = i;															//Wyslanie informacji o numerze zadania
+					zapis.Struct_Polecenie = 6;															//Wyslanie informacji o bledzie
+					OSQPost(Queue, &zapis);																//Wysylmy blad w kolejce do wyswietlenia
+				}
+				if(blad == OS_NO_ERR)																	//Jesli nie zostal nam zwrocony blad o wycieku pamieci to postepujemy normalnie
+				{
+					Edycja_Wsk_na_strukture->Struct_Obciazenie = Obciazenie_Edycja_32U;					//Przypisanie obciazenia do naszego wskaznika na strukture
+					Edycja_Wsk_na_strukture->Struct_Nr_Task = i;										//Oraz przypisanie numeru dla zadan dla Queue
+					blad=OSQPost(Queue_ptr_CB[i-5], Edycja_Wsk_na_strukture);							//Wyslanie polecenia o bledzie
+					if(blad==OS_Q_FULL) 																//Jesli Kolejka jest pelna zwraca sie blad
+					{ 
+						zapis.Struct_Err = OS_Q_FULL;													//Blad ze kolejka pelna
+						zapis.Struct_Nr_Task = i;														//Oraz przypisanie numeru dla zadan dla Queue
+						zapis.Struct_Polecenie = 6;														//Wyslanie polecenia o bledzie
+						OSQPost(Queue, &zapis);															//Wysylamy blad poprzez kolejke do wyswietlania
+						OSMemPut(Memory, Edycja_Wsk_na_strukture); 										//Zwalniamy pamiec bo nie weszlo do kolejki i nie zwolni sie w Q
+					}
+				}
+			}
+			for(i=0; i<=10; i++)
+				zapis.Struct_Bufor[i]= '\0'; 															//Po wyslaniu calego bufora czyscimy go 
+			i=0;
+		}
+		if(*pomoc == 83) 																				//Sprawdzamy czy zostal wcisniety klawisz delete
+		{
+			zapis.Struct_Polecenie = 2; 																//Informacja o tym ze wcisnelismy delete
+			for(i=0; i<=10; i++)
+				zapis.Struct_Bufor[i]= '\0'; 															//czyscimy Struct_Bufor 
+			i=0;
+		}			
+		if(*pomoc == 8) 																				//Sprawdzamy czy zostal wcisniety klawisz backspace
+		{
+			zapis.Struct_Polecenie = 1; 																//Dajemy znac, ze wcisnieto backspace
+			if(i>=1) 																					//jesli jest chociaz jeden znak w buforze to
+			{
+				i--; 																					//Przesuwamy sie po indeksie 
+				zapis.Struct_Bufor[i]='\0';  															//Oraz czyscimy wartosc przed ktora wcisnieto backspace
+			} 
+		}
+		else 																							//Zostal wcisniety znak inny niz specjalny
+		{
+			if((i<10)&&(((*pomoc)>='0')&&((*pomoc)<='9'))) 												//Jesli zostala wcisnieta cyfra
+			{
+				zapis.Struct_Polecenie = 0;																//Dajemy znac ze nie zostal wcisniety znak specjalny
+				zapis.Struct_Bufor[i] = *pomoc; 														//Do wartosci bufora zapisujemy wartosc;
+				i++; 																					//Zwiekszamy indeks tablicy 
+			}	
+		}
+		blad=OSQPost(Queue, &zapis); 																	//Wysylamy wskaznik na strukture do wyswietlenia
+	}
+ }
+ 
+void Q(void *data)
+{
+	INT8U *Queue_data_ptr;
+	INT32U x=0, i=0;
+	STRUKTURA_GLOWNA QTask_VAR_Struct,*QTask_VAR_Struct_ptr;
+	QTask_VAR_Struct.Struct_Obciazenie = 0; QTask_VAR_Struct.Struct_Licznik = 0;
+	for(;;)
+	{
+		Queue_data_ptr = data;
+		QTask_VAR_Struct.Struct_Nr_Task = *Queue_data_ptr; 												//Przypisywanie numeru zadania 
+		QTask_VAR_Struct.Struct_Polecenie = 4; 															//Dajemy polecenie 4 czyli Obciazenie
+		QTask_VAR_Struct_ptr = OSQAccept(Queue_ptr_CB[QTask_VAR_Struct.Struct_Nr_Task-5]); 				//Accept bo ma nie blokowac
+		if(QTask_VAR_Struct_ptr != NULL) 																//Jesli wskaznik nam coś zwrocil//Sprawdzamy czy odebrano wiadomosc
+		{ 																								
+			QTask_VAR_Struct.Struct_Obciazenie = QTask_VAR_Struct_ptr->Struct_Obciazenie;
+			OSMemPut(Memory, QTask_VAR_Struct_ptr); 													//Zwalniamy pamiec po uzyciu
+		}
+		OSQPost(Queue, &QTask_VAR_Struct); 																//Wysylamy do wysweitlania 
+		for(i=0; i<QTask_VAR_Struct.Struct_Obciazenie; i++)
+			x++;
+		QTask_VAR_Struct.Struct_Licznik++; 																//Inkrementacja licznika
+		OSTimeDly(1);																					//Uplynal cykl zegarowy 
+	}
+}
+
+void M(void *data)
+{
+	INT8U *Message_check_ptr;																			//Zmienna zwracajaca blad //pomocna zmienna do odbioru numeru zadania
+	INT32U x=0, i=0;
+	STRUKTURA_GLOWNA MTask_VAR_Struct, *MTask_VAR_Struct_ptr; 
+	MTask_VAR_Struct.Struct_Obciazenie = 0; 															//Wartosc poczatkowa obciazenia
+	MTask_VAR_Struct.Struct_Licznik = 0;																//Pierwszy raz jak wejdziemy do petli liczik=0
+	for(;;)
+	{
+		Message_check_ptr=data; 																		//Message_check_ptr numeru zadania
+		MTask_VAR_Struct.Struct_Nr_Task=*Message_check_ptr; 
+		MTask_VAR_Struct.Struct_Polecenie = 4; 															//Dajemy znac, ze jest to Struct_Obciazenie 
+		MTask_VAR_Struct_ptr = OSMboxAccept(MessageBox_ptr_CB[MTask_VAR_Struct.Struct_Nr_Task]); 		//Accept bo ma nie blokowac
+		if(MTask_VAR_Struct_ptr != NULL) 																//Sprawdzamy czy odebrana wiadomosc nie jest pusta
+			{ 
+				MTask_VAR_Struct.Struct_Obciazenie = MTask_VAR_Struct_ptr->Struct_Obciazenie; 			//Przypisujemy nasze Struct_Obciazenie
+				OSMemPut(Memory, MTask_VAR_Struct_ptr); 												//Zwalniamy pamiec, jesli sie nie wyslalo
+			}
+	    OSQPost(Queue, &MTask_VAR_Struct); 																//Wysylamy do wysweitlania 
+		for(i=0; i<MTask_VAR_Struct.Struct_Obciazenie; i++) 
+			x++; 																						//Inkrementuje sie w petli do maksymalnego obciazenia
+		MTask_VAR_Struct.Struct_Licznik++; 																//Inkrementujemy Struct_Licznik wejsc do zadania
+		OSTimeDly(1); 																					//Uplynal cykl zegarowy 
+	}
+}
+
+void S(void *data)
+{
+	INT8U blad, *Semafor_check_ptr;
+	INT16U Semafor_check; 																				//Zwracany typ przez OSSemAccept
+	INT32U x=0, i=0;
+	STRUKTURA_GLOWNA STask_VAR_Struct;
+	STask_VAR_Struct.Struct_Obciazenie =0 ; STask_VAR_Struct.Struct_Licznik = 0; 						//Odwolanie sie do globalnej struktury
+	for(;;)
+	{
+		Semafor_check_ptr = data;
+		STask_VAR_Struct.Struct_Nr_Task = *Semafor_check_ptr;
+		STask_VAR_Struct.Struct_Polecenie = 4;
+		Semafor_check = OSSemAccept(Semafor_Main); 														//Tutaj sprawdzamy czy jest dostepny zasob dlatego nie moze byc Pend
+		if(Semafor_check != NULL) 																		//Jesli jest dostepny to wchodzimy do warunku
+				STask_VAR_Struct.Struct_Obciazenie = obciazenieGlobalne;								//Przypisanie do zmiennej lokanej naszego obciazenia
+		blad = OSSemPost(Semafor_Main); 																//Zwalniamy semafor
+		if(blad != OS_NO_ERR) 																			//Jesli nie udalo sie zwolnic semaforu
+		{ 
+			STask_VAR_Struct.Struct_Polecenie = 6;														//Wyslanie informacji o bledzie										
+			STask_VAR_Struct.Struct_Err = 13; 
+			OSQPost(Queue, &STask_VAR_Struct); 															//Wysylamy, ze byl blad
+		} 
+		OSQPost(Queue, &STask_VAR_Struct); 																//Wysylamy do wyswietlania
+		for(i=0; i<STask_VAR_Struct.Struct_Obciazenie; i++)
+				x++;
+		STask_VAR_Struct.Struct_Licznik++; 																//Inkrementujemy Struct_Licznik wejsc do zadania
+		OSTimeDly(1);																					//Opoznienie zgodne z instrukcja
+	}
+}
