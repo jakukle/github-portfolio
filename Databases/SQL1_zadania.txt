@@ -1,0 +1,94 @@
+Jakub Klepacz
+
+Zad2
+
+select NAZWISKO
+from studenci 
+where NAZWISKO like 'K%'
+
+Zad3
+
+select p.nazwa_przedm
+from przedmioty p, pracownicy pr
+where pr.NR_PRAC = p.nr_odp_prac AND pr.NAZWISKO = 'JANECZEK'
+
+Zad6
+
+Select p.nazwisko
+from pracownicy p, rozklady r, sale s
+where s.rozm_sali > 20
+     AND s.EKRAN = 'T' 
+     AND s.NR_SALI = r.NR_SALI
+     AND r.NR_PRAC = p.NR_PRAC
+order by p.NAZWISKO
+
+Zad8
+
+Select pr1.nazwa_przedm as "Przedmiot", pr2.NAZWA_PRZEDM as "Przedmiot nadrzedny"
+From przedmioty pr1 left join przedmioty pr2 on (pr1.nr_przedm_nadrz = pr2.NR_PRZEDM)
+
+Zad9
+
+Select count(distinct r.nr_przedm)
+From rozklady r, pracownicy pr
+Where pr.NR_PRAC = r.nr_prac AND pr.NAZWISKO = 'JANECZEK'
+
+Zad12
+
+Select  r.NR_SALI, count(distinct r.nr_przedm)
+From rozklady r
+Group by r.NR_SALI
+
+Zad14
+
+Select p.nr_odp_prac, count(r.nr_sali)
+From przedmioty p, rozklady r
+Where r.nr_prac = p.nr_odp_prac
+Group by p.nr_odp_prac
+
+Zad16
+
+Select p.nazwisko
+From pracownicy p, rozklady r
+Where r.nr_prac = p.nr_prac AND r.dzien = 'PON'
+Group by p.nazwisko
+Having count(r.NR_SALI)>1
+
+Zad17
+
+Select p.nr_przedm, p.nazwa_przedm
+From przedmioty p, rozklady r
+Where p.nr_przedm = r.nr_przedm
+Group by p.nr_przedm,  p.nazwa_przedm
+Having count(distinct r.nr_sali) > 1
+
+Zad18
+
+Select pr.nazwa_przedm
+From pracownicy p, przedmioty pr
+Where pr.nr_odp_prac = p.NR_PRAC  AND p.DATA_UR > 
+(Select p.data_ur
+From pracownicy p
+Where p.nazwisko = 'JANECZEK')
+
+Zad19
+
+Select pr.nr_prac, pr.nazwisko
+From pracownicy pr, wyplaty w
+Where pr.NR_PRAC = w.nr_prac
+Group by pr.nr_prac, pr.NAZWISKO
+Having avg(w.KWOTA)<
+(Select avg(w.kwota)
+From wyplaty w, pracownicy pr
+Where pr.nazwisko = 'MISIURA' AND pr.NR_PRAC=w.nr_prac)
+
+Zad20
+
+Select p.NR_PRZEDM, P.NAZWA_PRZEDM
+From pracownicy pr, przedmioty p, rozklady r
+Where pr.nr_prac = r.NR_PRAC AND r.nr_przedm = p.nr_przedm
+Group by p.nr_przedm, p.nazwa_przedm
+Having count (distinct pr.NR_ZESP)>
+(Select count(distinct pr.NR_ZESP)
+From pracownicy pr, przedmioty p, rozklady r
+Where pr.nr_prac = r.NR_PRAC AND r.nr_przedm = p.nr_przedm AND p.nazwa_przedm = 'ALGEBRA')
