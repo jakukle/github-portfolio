@@ -1,0 +1,16 @@
+﻿  BinaryFile.cpp
+  CsvFile.cpp
+C:\Users\Krzysztof\Desktop\LAB 3 D 2.0\CsvFile.cpp(105,21): warning C4018: "<": niezgodność typu ze znakiem/bez znaku
+  FileFactory.cpp
+  IFile.cpp
+C:\Users\Krzysztof\Desktop\LAB 3 D 2.0\IFile.cpp(15,22): warning C4244: "=": konwersja z "std::streamoff" do "unsigned long", możliwa utrata danych
+  main.cpp
+  RNG.cpp
+C:\Users\Krzysztof\Desktop\LAB 3 D 2.0\RNG.h(7,2): warning C4091: "static ": zignorowano na lewo od "RNG" podczas gdy brak deklaracji zmiennej
+C:\Users\Krzysztof\Desktop\LAB 3 D 2.0\RNG.cpp(4,95): warning C4244: "argument": konwersja z "_Rep" do "unsigned int", możliwa utrata danych
+          with
+          [
+              _Rep=std::chrono::system_clock::rep
+          ]
+  Generowanie kodu...
+  LAB 3.vcxproj -> C:\Users\Krzysztof\Desktop\LAB 3 D 2.0\x64\Debug\LAB 3.exe
