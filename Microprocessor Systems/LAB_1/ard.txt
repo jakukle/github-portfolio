@@ -1,0 +1,95 @@
+
+
+int t = 500, i = 0, j = 0, k = 0, a = -1, w = 0, s=0, b = 0, l = 0, sw3 = 0, r = 0;
+void setup() {
+
+  pinMode(0, OUTPUT);
+  pinMode(1, OUTPUT);
+  pinMode(2, OUTPUT);
+  pinMode(3, OUTPUT);
+
+  pinMode(4, OUTPUT);
+  pinMode(5, OUTPUT);
+  pinMode(6, OUTPUT);
+  pinMode(7, OUTPUT);
+    
+  pinMode(8, INPUT);
+  pinMode(10, INPUT);
+  pinMode(11, INPUT);
+  pinMode(12, INPUT);
+  pinMode(13, INPUT);
+}
+
+
+void loop() {
+
+  //if (digitalRead(13) == LOW) digitalWrite(3, HIGH);
+  //else digitalWrite(3, LOW);
+
+if (sw3 == 0){
+  k = (i-a)%8;
+  j = i%8;
+  if(j == 7 || j == 0) a = -a;
+
+
+  digitalWrite(j, HIGH);
+  digitalWrite(k, LOW);
+  delay(t);                      
+
+  i+=a;
+} else {
+    
+    digitalWrite(r, LOW);
+    r = random(8);
+    digitalWrite(r, HIGH);
+    delay(1000);
+}
+
+  if (digitalRead(8) == LOW && s == 0) {
+    s = 1;
+    a = -a;
+    //digitalWrite(3, HIGH);
+    //delay(3000);
+  }
+
+
+
+// switch 2 -------------------------------------
+  if (digitalRead(9) == LOW && s == 0 && b == 0) {
+    s = 1; b = 1;
+    a = 3;
+    //digitalWrite(3, HIGH);
+    //delay(3000);
+  }
+  else if (digitalRead(9) == LOW && s == 0 && b == 1){
+    s = 1; b = 0; a = -1;
+    for (l = 0; l < 8; l++)
+      digitalWrite(l, LOW);
+  }
+
+//switch 3 --------------------
+
+  w = analogRead(A3);
+  if (w <= 2 && s == 0 && sw3 == 0) {
+    s = 1; sw3 = 1;
+    for (l = 0; l < 8; l++)
+      digitalWrite(l, LOW);
+    
+  }
+  else if (w <= 2 && s == 0 && sw3 == 1) {
+    s = 1;
+    for (l = 0; l < 8; l++)
+      digitalWrite(l, LOW);
+    sw3 = 0;
+  }
+
+
+
+  if(s == 1) {
+    delay(2000); s = 0;
+  }
+
+
+
+}
+
