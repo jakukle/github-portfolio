@@ -1,8 +1,0 @@
-﻿  List.cpp
-C:\Users\Krzysztof\Desktop\lab2-23.04.21\List.cpp(114,10): warning C4018: "<": niezgodność typu ze znakiem/bez znaku
-C:\Users\Krzysztof\Desktop\lab2-23.04.21\List.cpp(131,22): warning C4018: "<": niezgodność typu ze znakiem/bez znaku
-C:\Users\Krzysztof\Desktop\lab2-23.04.21\List.cpp(279,16): warning C4018: "<": niezgodność typu ze znakiem/bez znaku
-C:\Users\Krzysztof\Desktop\lab2-23.04.21\List.cpp(289,11): warning C4018: "<": niezgodność typu ze znakiem/bez znaku
-  main.cpp
-  Generowanie kodu...
-  lab2-23.04.21.vcxproj -> C:\Users\Krzysztof\Desktop\lab2-23.04.21\Debug\lab2-23.04.21.exe
