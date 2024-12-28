@@ -1,7 +1,0 @@
-﻿  Integrator.cpp
-C:\Users\Krzysztof\Desktop\Jakub Klepacz i Sebastian Swoboda\Laboratorium 4 b\Integrator.cpp(44,21): warning C4018: "<": niezgodność typu ze znakiem/bez znaku
-  IntegratorPool.cpp
-  IThread.cpp
-  threadPool_test.cpp
-  Generowanie kodu...
-  Laboratorium 4 b.vcxproj -> C:\Users\Krzysztof\Desktop\Jakub Klepacz i Sebastian Swoboda\Laboratorium 4 b\Debug\Laboratorium 4 b.exe
